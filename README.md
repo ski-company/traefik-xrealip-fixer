@@ -1,3 +1,7 @@
+<p align="left">
+  <img src="assets/traefik-xrealip-fixer-logo-transparent.png" alt="traefik-xrealip-fixer logo" width="220" />
+</p>
+
 # traefik-xrealip-fixer 
 
 **traefik-xrealip-fixer** is a Traefik middleware that reliably reconstructs the true client IP address in environments where multiple proxies, CDNs, and load balancers interfere with or override IP-related headers.
