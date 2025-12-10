@@ -21,10 +21,11 @@ func New(ctx context.Context, next http.Handler, cfg *config.Config, name string
 	logger.EnableDebug(cfg.Debug)
 
 	ipFinder := &Ipfinder{
-		next:      next,
-		name:      name,
-		TrustIP:   make(map[providers.Provider][]*net.IPNet),
-		userTrust: cfg.TrustIP,
+		next:        next,
+		name:        name,
+		TrustIP:     make(map[providers.Provider][]*net.IPNet),
+		userTrust:   cfg.TrustIP,
+		directDepth: cfg.DirectDepth,
 	}
 
 	logger.LogInfo("ipfinder initialized")

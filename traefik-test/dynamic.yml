@@ -4,7 +4,8 @@ http:
       plugin:
         xrealip-fixer:
           autoRefresh: true
-          refreshInterval: 1m
+          refreshInterval: 30m
+          directDepth: 1
           debug: true
 
   routers:

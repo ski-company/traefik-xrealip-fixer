@@ -3,6 +3,7 @@ package ipfinder
 import (
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/ski-company/traefik-xrealip-fixer/internal/helper"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
@@ -27,11 +28,25 @@ func (ipFinder *Ipfinder) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	// Fast-path direct: no provider hints at all
 	if matched == providers.Unknown {
+		// Walk X-Forwarded-For from the end according to directDepth.
+		xff := req.Header.Get(helper.XForwardFor)
+		clientIP := socketIP
+		if xff != "" && ipFinder.directDepth > 0 {
+			parts := strings.Split(xff, ",")
+			for i := len(parts) - 1; i >= 0 && (len(parts)-1-i) < ipFinder.directDepth; i-- {
+				candidate := helper.ExtractClientIP(parts[i])
+				if net.ParseIP(candidate) != nil {
+					clientIP = candidate
+					break
+				}
+			}
+		}
+
 		helper.CleanInboundForwardingHeaders(req.Header)
 		req.Header.Set(helper.XRealipFixerTrusted, "yes")
 		req.Header.Set(helper.XRealipFixerProvider, "direct")
-		helper.AppendXFF(req.Header, socketIP)
-		req.Header.Set(helper.XRealIP, socketIP)
+		helper.AppendXFF(req.Header, clientIP)
+		req.Header.Set(helper.XRealIP, clientIP)
 		ipFinder.next.ServeHTTP(rw, req)
 		return
 	}

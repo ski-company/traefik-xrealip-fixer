@@ -18,9 +18,11 @@ const (
 // cleanInboundForwardingHeaders removes spoofable forwarding headers.
 // We always set trusted values ourselves after validation.
 func CleanInboundForwardingHeaders(h http.Header) {
-	h.Del(XForwardFor)
 	h.Del(XRealIP)
+	h.Del(XForwardFor)
 	h.Del(Forwarded)
+	h.Del(XRealipFixerTrusted)
+	h.Del(XRealipFixerProvider)
 }
 
 // appendXFF appends client to X-Forwarded-For per common proxy behavior.
