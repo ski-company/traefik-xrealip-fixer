@@ -4,135 +4,84 @@
 
 # traefik-xrealip-fixer
 
-**traefik-xrealip-fixer** is a Traefik middleware that reliably reconstructs the true client IP address in environments where multiple proxies, CDNs, and load balancers interfere with or override IP-related headers.
+Middleware Traefik qui reconstruit l’IP client de façon fiable en fonction :
+- des en-têtes Cloudflare (`CF-Connecting-IP`) et CloudFront,
+- du socket distant,
+- d’un scan contrôlé de `X-Forwarded-For` depuis la fin (proche du dernier proxy).
 
-Modern infrastructures often include layers such as Cloudflare, AWS ALB/NLB, Traefik ingress controllers, reverse proxies, and internal mesh components. Each hop may append or modify values in `X-Forwarded-For` or `X-Real-IP`, making it difficult — and sometimes impossible — for backend services to determine the actual originating client IP.
+Il marque chaque requête via `X-Realip-Fixer-Trusted` (yes/no) et `X-Realip-Fixer-Provider` (cloudflare/cloudfront/direct) et réécrit `X-Real-IP` / `X-Forwarded-For` pour downstream.
 
-This middleware solves that problem by implementing a robust, anti-spoofing IP extraction algorithm:
+## Fonctionnement
+- Si aucun header provider (Cloudflare/CloudFront) : chemin « direct », on prend l’IP socket ou un hop XFF selon `directDepth`.
+- Si header provider présent : on vérifie que l’IP socket appartient aux ranges Cloudflare/CloudFront (CIDRs rafraîchies périodiquement). Sinon 410.
+- On extrait l’IP client à partir du header provider, fallback IP socket si invalide, puis on réécrit XFF/X-Real-IP.
 
-- Automatically handles Cloudflare headers (`CF-Connecting-IP`, `True-Client-IP`)
-- Fully compatible with AWS ALB/NLB and other proxy layers
-- Extracts the correct client IP from `X-Forwarded-For` using **reverse indexing** (from the end)
-- Ignores spoofed, private, reserved, or internal IP ranges
-- Overwrites or sets `X-Real-IP` with a clean, verified public IP address
-
-By restoring an accurate and trustworthy client source address, `traefik-xrealip-fixer` improves access logs, rate limiting, WAF rules, fraud detection, and any IP‑based decision system.
-
----
-
-## ✨ Features
-
-- 🔒 Anti-spoofing logic
-- 🔍 Smart backward scanning of X-Forwarded-For
-- ☁️ Cloudflare support out of the box
-- 🟢 Compatible with Traefik v3 middleware chain
-- 🚀 Zero configuration required
-
----
-
-## 📦 Installation
-
-### Static configuration (TOML)
-
-```toml
-[experimental.plugins.traefik-xrealip-fixer]
-  moduleName = "github.com/ski-company/traefik-xrealip-fixer"
-  version = "v1.0.0"
+## Configuration du plugin (dynamic.yml)
+```yaml
+http:
+  middlewares:
+    xrealip-fixer:
+      plugin:
+        xrealip-fixer:
+          autoRefresh: true            # refresh périodique des CIDRs CF/CFN
+          refreshInterval: 30m         # durée Go, ex: "12h", "30m"
+          directDepth: 1               # nombre de hops XFF à considérer en chemin direct
+          trustip:                     # (optionnel) CIDRs custom à ajouter
+            cloudflare:
+              - "203.0.113.0/24"
+            cloudfront:
+              - "198.51.100.0/24"
+          debug: false
 ```
 
-### Static configuration (YAML)
+### Headers ajoutés / réécrits
+- `X-Real-IP` : IP client validée.
+- `X-Forwarded-For` : append de l’IP client validée.
+- `X-Realip-Fixer-Trusted` : `yes` ou `no`.
+- `X-Realip-Fixer-Provider` : `cloudflare`, `cloudfront`, `direct` ou `unknown`.
 
+### Codes de réponse
+- Requête avec header provider mais IP socket non autorisée → 410 Gone + headers provider nettoyés.
+
+## Exemple Traefik local (extrait)
+`traefik-test/traefik.yml` (static) active le plugin local :
 ```yaml
 experimental:
-  plugins:
-    traefik-xrealip-fixer:
+  localPlugins:
+    xrealip-fixer:
       moduleName: github.com/ski-company/traefik-xrealip-fixer
-      version: v1.0.0
 ```
-
-### Enable middleware
-
+`traefik-test/dynamic.yml` (dynamic) :
 ```yaml
 http:
   middlewares:
-    realip:
+    xrealip-fixer:
       plugin:
-        traefik-xrealip-fixer: {}
-```
+        xrealip-fixer:
+          autoRefresh: true
+          refreshInterval: 30m
+          directDepth: 1
+          debug: false
 
----
-
-## 🧩 Usage Example
-
-```yaml
-http:
   routers:
-    myapp:
-      rule: "Host(`example.com`)"
-      service: myapp-svc
-      middlewares:
-        - realip
-
-  middlewares:
-    realip:
-      plugin:
-        traefik-xrealip-fixer: {}
+    whoami-router:
+      rule: Host(`whoami.local`)
+      entryPoints: [web]
+      service: whoami-svc
+      middlewares: [xrealip-fixer]
 ```
 
----
+## Dev / Test local
+- `docker compose -f docker-compose-test.yml up -d` pour Traefik + whoami.
+- Benchmark k6 (profil bench) :  
+  `docker compose -f docker-compose-test.yml --profile bench run --rm k6`
+  (env optionnels : `HOST=whoami.local`, `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`, `VUS`, `DURATION`).
 
-## ⚙️ Options
+## Champs de configuration (struct `Config`)
+- `trustip` : map provider → liste de CIDRs à ajouter.
+- `autoRefresh` (bool), `refreshInterval` (durée Go).
+- `directDepth` (int) : profondeur XFF en chemin direct.
+- `debug` (bool).
 
-```yaml
-plugin:
-  traefik-xrealip-fixer:
-    trustCloudflare: true
-    trustXForwardedFor: true
-    privateRanges:
-      - "10.0.0.0/8"
-      - "192.168.0.0/16"
-      - "172.16.0.0/12"
-      - "fc00::/7"
-```
-
----
-
-## 🔍 How it Works
-
-1. Prefer Cloudflare headers when present  
-2. Otherwise parse `X-Forwarded-For`  
-3. Walk from the **end** of the list (closest proxy)  
-4. Skip private/reserved IPs  
-5. First public IP found is used as the real client IP  
-6. Set/override `X-Real-IP`
-
----
-
-## 🛡 Security Considerations
-
-- Protects against spoofed first-hop IPs  
-- Only selects valid public IP addresses  
-- Safe defaults inspired by common proxy/CDN behavior  
-
----
-
-## 🧪 Development
-
-```bash
-git clone https://github.com/ski-company/traefik-xrealip-fixer
-cd traefik-xrealip-fixer
-go build ./...
-go test ./...
-```
-
----
-
-## 📜 License
-
-MIT or Apache 2.0
-
----
-
-## 🤝 Contributing
-
-PRs, issues, and ideas are welcome!
+## Licence
+MIT
