@@ -5,7 +5,7 @@ http:
         xrealip-fixer:
           autoRefresh: true
           refreshInterval: 30m
-          directDepth: 12
+          directDepth: 1
           debug: true
 
   routers:
