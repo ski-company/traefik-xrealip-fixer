@@ -3,15 +3,16 @@ type: middleware
 import: github.com/ski-company/traefik-xrealip-fixer
 iconPath: .assets/traefik-xrealip-fixer-logo-transparent.png
 summary: |
-  Traefik XRealIP Fixer inspects Cloudflare headers, Cloudfront headers, and the full
-  X-Forwarded-For chain (indexing from the end) to determine the first trustworthy public IP.
-  It then writes X-Real-IP with that verified address so downstream services can rely on it for
-  logging, rate limiting, and security decisions.
+  Traefik XRealIP Fixer detects Cloudflare/CloudFront, validates the socket IP against their CIDRs,
+  or follows a "direct" path with X-Forwarded-For (reverse scan, configurable depth).
+  It rewrites X-Real-IP and tags the request (trusted/provider) for downstream services.
 testData:
-  trustCloudflare: true
-  trustXForwardedFor: true
-  privateRanges:
-    - 10.0.0.0/8
-    - 192.168.0.0/16
-    - 172.16.0.0/12
-    - fc00::/7
+  autoRefresh: true
+  refreshInterval: 30m
+  directDepth: 1
+  trustip:
+    cloudflare:
+      - 203.0.113.0/24
+    cloudfront:
+      - 198.51.100.0/24
+  debug: false

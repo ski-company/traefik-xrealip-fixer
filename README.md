@@ -4,29 +4,29 @@
 
 # traefik-xrealip-fixer
 
-Middleware Traefik qui reconstruit l’IP client de façon fiable en fonction :
-- des en-têtes Cloudflare (`CF-Connecting-IP`) et CloudFront,
-- du socket distant,
-- d’un scan contrôlé de `X-Forwarded-For` depuis la fin (proche du dernier proxy).
+Traefik middleware that rebuilds a trustworthy client IP by inspecting:
+- Cloudflare / CloudFront headers,
+- the remote socket,
+- a controlled reverse scan of `X-Forwarded-For` (closest hop first, depth-limited).
 
-Il marque chaque requête via `X-Realip-Fixer-Trusted` (yes/no) et `X-Realip-Fixer-Provider` (cloudflare/cloudfront/direct) et réécrit `X-Real-IP` / `X-Forwarded-For` pour downstream.
+Each request is marked with `X-Realip-Fixer-Trusted` (`yes`/`no`) and `X-Realip-Fixer-Provider` (`cloudflare`/`cloudfront`/`direct`/`unknown`), and `X-Real-IP` / `X-Forwarded-For` are rewritten for downstream services.
 
-## Fonctionnement
-- Si aucun header provider (Cloudflare/CloudFront) : chemin « direct », on prend l’IP socket ou un hop XFF selon `directDepth`.
-- Si header provider présent : on vérifie que l’IP socket appartient aux ranges Cloudflare/CloudFront (CIDRs rafraîchies périodiquement). Sinon 410.
-- On extrait l’IP client à partir du header provider, fallback IP socket si invalide, puis on réécrit XFF/X-Real-IP.
+## How it works
+- No provider header (CF/CFN) → “direct” path: use socket IP or walk XFF up to `directDepth`.
+- Provider header present → verify socket IP is in Cloudflare/CloudFront CIDRs (periodically refreshed); otherwise 410 Gone.
+- Extract client IP from the provider header, fall back to socket IP if invalid, then rewrite XFF / X-Real-IP.
 
-## Configuration du plugin (dynamic.yml)
+## Plugin configuration (dynamic.yml)
 ```yaml
 http:
   middlewares:
     xrealip-fixer:
       plugin:
         xrealip-fixer:
-          autoRefresh: true            # refresh périodique des CIDRs CF/CFN
-          refreshInterval: 30m         # durée Go, ex: "12h", "30m"
-          directDepth: 1               # nombre de hops XFF à considérer en chemin direct
-          trustip:                     # (optionnel) CIDRs custom à ajouter
+          autoRefresh: true            # periodic refresh of CF/CFN CIDRs
+          refreshInterval: 30m         # Go duration, e.g. "12h", "30m"
+          directDepth: 1               # how many XFF hops to walk in direct mode
+          trustip:                     # optional: extra CIDRs to trust per provider
             cloudflare:
               - "203.0.113.0/24"
             cloudfront:
@@ -34,24 +34,24 @@ http:
           debug: false
 ```
 
-### Headers ajoutés / réécrits
-- `X-Real-IP` : IP client validée.
-- `X-Forwarded-For` : append de l’IP client validée.
-- `X-Realip-Fixer-Trusted` : `yes` ou `no`.
-- `X-Realip-Fixer-Provider` : `cloudflare`, `cloudfront`, `direct` ou `unknown`.
+### Headers added / rewritten
+- `X-Real-IP`: validated client IP.
+- `X-Forwarded-For`: append validated client IP.
+- `X-Realip-Fixer-Trusted`: `yes` or `no`.
+- `X-Realip-Fixer-Provider`: `cloudflare`, `cloudfront`, `direct`, `unknown`.
 
-### Codes de réponse
-- Requête avec header provider mais IP socket non autorisée → 410 Gone + headers provider nettoyés.
+### Response codes
+- Provider header present but socket IP not allowed → `410 Gone` + provider headers stripped.
 
-## Exemple Traefik local (extrait)
-`traefik-test/traefik.yml` (static) active le plugin local :
+## Local Traefik example (excerpt)
+Static (`traefik-test/traefik.yml`) to enable local plugin:
 ```yaml
 experimental:
   localPlugins:
     xrealip-fixer:
       moduleName: github.com/ski-company/traefik-xrealip-fixer
 ```
-`traefik-test/dynamic.yml` (dynamic) :
+Dynamic (`traefik-test/dynamic.yml`):
 ```yaml
 http:
   middlewares:
@@ -71,17 +71,21 @@ http:
       middlewares: [xrealip-fixer]
 ```
 
-## Dev / Test local
-- `docker compose -f docker-compose-test.yml up -d` pour Traefik + whoami.
-- Benchmark k6 (profil bench) :  
-  `docker compose -f docker-compose-test.yml --profile bench run --rm k6`
-  (env optionnels : `HOST=whoami.local`, `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`, `VUS`, `DURATION`).
+## Dev / local test
+- `docker compose -f docker-compose-test.yml up -d` (Traefik + whoami + plugin source mounted).
+- k6 benchmark (profile `bench`):  
+  `docker compose -f docker-compose-test.yml --profile bench run --rm k6`  
+  Optional env: `HOST=whoami.local`, `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`, `VUS`, `DURATION`.
 
-## Champs de configuration (struct `Config`)
-- `trustip` : map provider → liste de CIDRs à ajouter.
-- `autoRefresh` (bool), `refreshInterval` (durée Go).
-- `directDepth` (int) : profondeur XFF en chemin direct.
+## Config fields (struct `Config`)
+- `trustip`: map provider → extra CIDRs.
+- `autoRefresh` (bool), `refreshInterval` (Go duration).
+- `directDepth` (int): XFF depth for direct path.
 - `debug` (bool).
 
 ## Licence
 MIT
+
+---
+
+See `README.fr.md` for the French version.
