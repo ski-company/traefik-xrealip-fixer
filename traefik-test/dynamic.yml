@@ -1,8 +1,8 @@
 http:
   middlewares:
-    xrealip-fixer:
+    traefik-xrealip-fixer:
       plugin:
-        xrealip-fixer:
+        traefik-xrealip-fixer:
           autoRefresh: true
           refreshInterval: 30m
           directDepth: 1
@@ -15,7 +15,7 @@ http:
         - web
       service: whoami-svc
       middlewares:
-        - xrealip-fixer
+        - traefik-xrealip-fixer
 
   services:
     whoami-svc:

@@ -19,9 +19,9 @@ providers:
 experimental:
   # Enable the local plugin using the module name as in README
   localPlugins:
-    xrealip-fixer:
+    traefik-xrealip-fixer:
       moduleName: github.com/ski-company/traefik-xrealip-fixer
   # plugins:
-  #   xrealip-fixer:
-  #     moduleName: github.com/Ski-Company/traefik-xrealip-fixer
-  #     version: v1.0.0
+  #   traefik-xrealip-fixer:
+  #     moduleName: "github.com/ski-company/traefik-xrealip-fixer"
+  #     version: "v1.0.0"
