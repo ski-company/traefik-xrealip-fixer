@@ -9,8 +9,6 @@ import (
 
 	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/providers"
-	"github.com/ski-company/traefik-xrealip-fixer/internal/providers/cloudflare"
-	"github.com/ski-company/traefik-xrealip-fixer/internal/providers/cloudfront"
 )
 
 // refreshProvidersIPSLoop periodically refreshes the allowlists until ctx is done.
@@ -24,9 +22,10 @@ func (ipFinder *Ipfinder) refreshProvidersIPSLoop(ctx context.Context, interval 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := ipFinder.refreshProvidersIPS(); err != nil {
+			refreshed, err := ipFinder.refreshProvidersIPS()
+			if err != nil {
 				logger.LogWarn("periodic providers IPS refresh failed", "error", err.Error())
-			} else {
+			} else if refreshed {
 				cfCIDRsQty, cfnCIDRsQty := ipFinder.cidrCounts()
 				logger.LogInfo("providers IPS refreshed", "cloudflare", fmt.Sprintf("%d", cfCIDRsQty), "cloudfront", fmt.Sprintf("%d", cfnCIDRsQty))
 			}
@@ -36,10 +35,9 @@ func (ipFinder *Ipfinder) refreshProvidersIPSLoop(ctx context.Context, interval 
 }
 
 // refreshProvidersIPS fetches defaults + merges user-supplied CIDRs, then swaps atomically.
-func (ipFinder *Ipfinder) refreshProvidersIPS() error {
+func (ipFinder *Ipfinder) refreshProvidersIPS() (bool, error) {
 	// Always fetch both providers; selection is enforced later per request.
-	cfCIDRs := cloudflare.TrustedIPS()
-	cfnCIDRs := cloudfront.TrustedIPS()
+	cfCIDRs, cfnCIDRs, refreshed := getProviderBase(ipFinder.refreshTTL)
 
 	if list, ok := ipFinder.userTrust[providers.Cloudflare.String()]; ok {
 		cfCIDRs = append(cfCIDRs, list...)
@@ -76,7 +74,7 @@ func (ipFinder *Ipfinder) refreshProvidersIPS() error {
 	ipFinder.cfnCIDRsQty = len(newMap[providers.Cloudfront])
 	ipFinder.mu.Unlock()
 
-	return nil
+	return refreshed, nil
 }
 
 // helper: membership check with lock

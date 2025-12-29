@@ -9,16 +9,27 @@ http:
           debug: true
 
   routers:
-    whoami-router:
-      rule: Host(`whoami.local`)
+    whoami1-router:
+      rule: Host(`whoami1.local`)
       entryPoints:
         - web
-      service: whoami-svc
+      service: whoami1-svc
+      middlewares:
+        - traefik-xrealip-fixer
+    whoami2-router:
+      rule: Host(`whoami2.local`)
+      entryPoints:
+        - web
+      service: whoami2-svc
       middlewares:
         - traefik-xrealip-fixer
 
   services:
-    whoami-svc:
+    whoami1-svc:
       loadBalancer:
         servers:
-          - url: "http://whoami:80"
+          - url: "http://whoami1:80"
+    whoami2-svc:
+      loadBalancer:
+        servers:
+          - url: "http://whoami2:80"

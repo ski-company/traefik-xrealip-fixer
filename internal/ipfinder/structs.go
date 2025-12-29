@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/ski-company/traefik-xrealip-fixer/internal/providers"
 )
@@ -16,6 +17,7 @@ type Ipfinder struct {
 	cfCIDRsQty  int
 	cfnCIDRsQty int
 	directDepth int
+	refreshTTL  time.Duration
 
 	mu        sync.RWMutex        // guards TrustIP
 	userTrust map[string][]string // keep user-supplied CIDRs for merges on refresh

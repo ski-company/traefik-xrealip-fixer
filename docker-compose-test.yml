@@ -14,14 +14,26 @@ services:
     networks:
       - proxy
 
-  whoami:
+  whoami1:
     image: traefik/whoami
-    container_name: whoami
+    container_name: whoami1
     restart: unless-stopped
     expose:
       - "80"
     environment:
-      - WHOAMI_NAME=whoami
+      - WHOAMI_NAME=whoami1
+      - WHOAMI_PORT_NUMBER=80
+    networks:
+      - proxy
+  
+  whoami2:
+    image: traefik/whoami
+    container_name: whoami2
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      - WHOAMI_NAME=whoami2
       - WHOAMI_PORT_NUMBER=80
     networks:
       - proxy

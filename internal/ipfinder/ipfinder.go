@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ski-company/traefik-xrealip-fixer/internal/config"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/providers"
 )
+
+var logInitOnce sync.Once
 
 // New builds a Ipfinder handler from the given config.
 func New(ctx context.Context, next http.Handler, cfg *config.Config, name string) (*Ipfinder, error) {
@@ -28,21 +31,26 @@ func New(ctx context.Context, next http.Handler, cfg *config.Config, name string
 		directDepth: cfg.DirectDepth,
 	}
 
-	logger.LogInfo("ipfinder initialized")
+	ival, err := time.ParseDuration(cfg.RefreshInterval)
+	if err != nil || ival <= 0 {
+		ival = 12 * time.Hour
+	}
+	ipFinder.refreshTTL = ival
 
-	if err := ipFinder.refreshProvidersIPS(); err != nil {
+	logInitOnce.Do(func() {
+		logger.LogInfo("ipfinder initialized")
+	})
+
+	refreshed, err := ipFinder.refreshProvidersIPS()
+	if err != nil {
 		logger.LogWarn("initial providers IPS refresh load had issues", "error", err.Error(), "middleware", name)
-	} else {
+	} else if refreshed {
 		cfCIDRsQty, cfnCIDRsQty := ipFinder.cidrCounts()
 		logger.LogInfo("providers IPS loaded", "cloudflare", fmt.Sprintf("%d", cfCIDRsQty), "cloudfront", fmt.Sprintf("%d", cfnCIDRsQty), "middleware", name)
 	}
 
 	if cfg.AutoRefresh {
-		ival, err := time.ParseDuration(cfg.RefreshInterval)
-		if err != nil || ival <= 0 {
-			ival = 12 * time.Hour
-		}
-		go ipFinder.refreshProvidersIPSLoop(ctx, ival)
+		startGlobalRefresh(ival)
 	}
 
 	return ipFinder, nil
