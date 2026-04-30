@@ -3,9 +3,16 @@ package cloudfront
 
 import (
 	"encoding/json"
-	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"time"
+
+	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
+)
+
+const (
+	requestTimeout = 10 * time.Second
+	maxBodyBytes   = 1 << 20
 )
 
 // CFIPs is the CloudFlare Server IP list (this is checked on build).
@@ -14,26 +21,28 @@ func TrustedIPS() []string {
 	// Found at https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/LocationsOfEdgeServers.html
 	url := "https://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips"
 
-	resp, err := http.Get(url)
+	client := http.Client{Timeout: requestTimeout}
+	resp, err := client.Get(url)
 	if err != nil {
-		fmt.Println("Error making the request:", err)
-		return []string{
-			"192.168.0.0/16",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-		}
+		logger.LogWarn("CloudFront IP list fetch failed", "url", url, "error", err.Error())
+		return nil
 	}
 	defer resp.Body.Close() // Ensure the response body is closed
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		logger.LogWarn("CloudFront IP list fetch returned unexpected status", "url", url, "status", resp.Status)
+		return nil
+	}
+
 	// Read the response body
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
-		fmt.Println("Error reading the response body:", err)
-		return []string{
-			"192.168.0.0/16",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-		}
+		logger.LogWarn("CloudFront IP list read failed", "url", url, "error", err.Error())
+		return nil
+	}
+	if len(body) > maxBodyBytes {
+		logger.LogWarn("CloudFront IP list response too large", "url", url)
+		return nil
 	}
 	// Define a map to hold the JSON data
 	var data map[string][]string
@@ -41,12 +50,8 @@ func TrustedIPS() []string {
 	// Parse the JSON response
 	err = json.Unmarshal(body, &data)
 	if err != nil {
-		fmt.Println("Error parsing the JSON:", err)
-		return []string{
-			"192.168.0.0/16",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-		}
+		logger.LogWarn("CloudFront IP list JSON parse failed", "url", url, "error", err.Error())
+		return nil
 	}
 
 	// Extract the arrays
@@ -54,16 +59,14 @@ func TrustedIPS() []string {
 	regionalIPList, regionalExists := data["CLOUDFRONT_REGIONAL_EDGE_IP_LIST"]
 
 	if !globalExists && !regionalExists {
-		fmt.Println("Both keys are missing in the response")
-		return []string{
-			"192.168.0.0/16",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-		}
+		logger.LogWarn("CloudFront IP list response missing expected keys", "url", url)
+		return nil
 	}
 
 	// Merge the arrays
-	mergedIPList := append(globalIPList, regionalIPList...)
+	mergedIPList := make([]string, 0, len(globalIPList)+len(regionalIPList))
+	mergedIPList = append(mergedIPList, globalIPList...)
+	mergedIPList = append(mergedIPList, regionalIPList...)
 
 	return mergedIPList
 }

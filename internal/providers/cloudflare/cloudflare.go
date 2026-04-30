@@ -3,9 +3,13 @@ package cloudflare
 
 import (
 	"bufio"
-	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
 )
+
+const requestTimeout = 10 * time.Second
 
 // TrustedIPS fetches Cloudflare's current IP ranges (IPv4 + IPv6).
 func TrustedIPS() []string {
@@ -15,13 +19,18 @@ func TrustedIPS() []string {
 	}
 
 	var ipList []string
+	client := http.Client{Timeout: requestTimeout}
 	for _, url := range urls {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err != nil {
-			fmt.Println("Error fetching", url, ":", err)
+			logger.LogWarn("Cloudflare IP list fetch failed", "url", url, "error", err.Error())
 			continue
 		}
-		defer resp.Body.Close()
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			logger.LogWarn("Cloudflare IP list fetch returned unexpected status", "url", url, "status", resp.Status)
+			_ = resp.Body.Close()
+			continue
+		}
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -32,17 +41,9 @@ func TrustedIPS() []string {
 		}
 
 		if err := scanner.Err(); err != nil {
-			fmt.Println("Error reading response from", url, ":", err)
+			logger.LogWarn("Cloudflare IP list read failed", "url", url, "error", err.Error())
 		}
-	}
-
-	// Fallback: if nothing was fetched, allow all
-	if len(ipList) == 0 {
-		return []string{
-			"192.168.0.0/16",
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-		}
+		_ = resp.Body.Close()
 	}
 
 	return ipList

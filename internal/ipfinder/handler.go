@@ -61,7 +61,6 @@ func detectProvider(req *http.Request) providers.Provider {
 func (ipFinder *Ipfinder) directClientIP(req *http.Request, socketIP string) string {
 	xff := req.Header.Get(helper.XForwardedFor)
 	if xff == "" || ipFinder.directDepth <= 0 {
-		logger.LogWarn("Direct path: no XFF or invalid directDepth; using socket IP", "socketIP", socketIP)
 		return socketIP
 	}
 
@@ -70,14 +69,14 @@ func (ipFinder *Ipfinder) directClientIP(req *http.Request, socketIP string) str
 		return ip
 	} else {
 		if seen < depth {
-			logger.LogWarn(
+			logger.LogDebug(
 				"Direct path: directDepth exceeds XFF length; using socket IP",
 				"socketIP", socketIP,
 				"directDepth", strconv.Itoa(depth),
 				"xffLen", strconv.Itoa(seen),
 			)
 		} else {
-			logger.LogWarn("Direct path: no valid IP found in XFF; using socket IP", "socketIP", socketIP)
+			logger.LogDebug("Direct path: no valid IP found in XFF; using socket IP", "socketIP", socketIP)
 		}
 		return socketIP
 	}

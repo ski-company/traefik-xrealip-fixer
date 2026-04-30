@@ -53,24 +53,13 @@ func refreshProvidersLoop() {
 
 	for {
 		<-t.C
-		forceRefreshProviderBase()
+		if _, _, refreshed := getProviderBase(getGlobalInterval()); refreshed {
+			logger.LogInfo("providers IPS cache refreshed")
+		}
 		forceRefreshGeoIPBase()
 		interval := getGlobalInterval()
 		t.Reset(interval)
 	}
-}
-
-func forceRefreshProviderBase() {
-	cfCIDRs := cloudflare.TrustedIPS()
-	cfnCIDRs := cloudfront.TrustedIPS()
-
-	globalProviderCache.mu.Lock()
-	globalProviderCache.cfCIDRs = cfCIDRs
-	globalProviderCache.cfnCIDRs = cfnCIDRs
-	globalProviderCache.lastRefresh = time.Now()
-	globalProviderCache.mu.Unlock()
-
-	logger.LogInfo("providers IPS cache refreshed")
 }
 
 func getProviderBase(ttl time.Duration) (cfCIDRs []string, cfnCIDRs []string, refreshed bool) {
@@ -80,8 +69,7 @@ func getProviderBase(ttl time.Duration) (cfCIDRs []string, cfnCIDRs []string, re
 
 	now := time.Now()
 	globalProviderCache.mu.RLock()
-	fresh := len(globalProviderCache.cfCIDRs) > 0 &&
-		len(globalProviderCache.cfnCIDRs) > 0 &&
+	fresh := !globalProviderCache.lastRefresh.IsZero() &&
 		now.Sub(globalProviderCache.lastRefresh) < ttl
 	if fresh {
 		cfCIDRs = append([]string(nil), globalProviderCache.cfCIDRs...)
@@ -94,8 +82,7 @@ func getProviderBase(ttl time.Duration) (cfCIDRs []string, cfnCIDRs []string, re
 	globalProviderCache.mu.Lock()
 	defer globalProviderCache.mu.Unlock()
 	now = time.Now()
-	fresh = len(globalProviderCache.cfCIDRs) > 0 &&
-		len(globalProviderCache.cfnCIDRs) > 0 &&
+	fresh = !globalProviderCache.lastRefresh.IsZero() &&
 		now.Sub(globalProviderCache.lastRefresh) < ttl
 	if !fresh {
 		globalProviderCache.cfCIDRs = cloudflare.TrustedIPS()

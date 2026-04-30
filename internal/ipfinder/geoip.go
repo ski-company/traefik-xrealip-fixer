@@ -165,18 +165,20 @@ func refreshGeoIPBaseWithSettings(settings geoIPSettings, ttl time.Duration, for
 }
 
 func lookupCountryCode(clientIP string) string {
-	addr, err := netip.ParseAddr(clientIP)
-	if err != nil {
-		return ""
-	}
-
 	var record geoIPCountryRecord
 	globalGeoIPCache.mu.RLock()
-	if globalGeoIPCache.reader == nil {
+	reader := globalGeoIPCache.reader
+	if reader == nil {
 		globalGeoIPCache.mu.RUnlock()
 		return ""
 	}
-	result := globalGeoIPCache.reader.Lookup(addr)
+
+	addr, err := netip.ParseAddr(clientIP)
+	if err != nil || !isGeoIPLookupAddr(addr) {
+		globalGeoIPCache.mu.RUnlock()
+		return ""
+	}
+	result := reader.Lookup(addr)
 	if err := result.Err(); err != nil {
 		globalGeoIPCache.mu.RUnlock()
 		return ""
@@ -198,4 +200,8 @@ func lookupCountryCode(clientIP string) string {
 		return strings.ToUpper(code)
 	}
 	return strings.ToUpper(strings.TrimSpace(record.RepresentedCountry.ISOCode))
+}
+
+func isGeoIPLookupAddr(addr netip.Addr) bool {
+	return addr.IsGlobalUnicast() && !addr.IsPrivate()
 }
