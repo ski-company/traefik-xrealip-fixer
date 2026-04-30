@@ -1,4 +1,5 @@
 // Package mmdb implements a minimal MaxMind DB reader using only stdlib.
+// All functions use concrete types — no interface{} — for Yaegi compatibility.
 package mmdb
 
 import (
@@ -9,217 +10,229 @@ import (
 
 // MaxMind DB type codes (high 3 bits of control byte).
 const (
-	typeExtended = 0
-	typePointer  = 1
-	typeString   = 2
-	typeDouble   = 3
-	typeBytes    = 4
-	typeUint16   = 5
-	typeUint32   = 6
-	typeMap      = 7
-	// Extended type codes decoded as: second_byte + 7.
-	typeInt32   = 8
-	typeUint64  = 9
-	typeUint128 = 10
-	typeArray   = 11
-	typeCache   = 12
-	typeEnd     = 13
-	typeBool    = 14
-	typeFloat   = 15
+	mmdbTypeExtended = 0
+	mmdbTypePointer  = 1
+	mmdbTypeString   = 2
+	mmdbTypeDouble   = 3
+	mmdbTypeBytes    = 4
+	mmdbTypeUint16   = 5
+	mmdbTypeUint32   = 6
+	mmdbTypeMap      = 7
+	// Extended types: second control byte value + 7.
+	mmdbTypeInt32   = 8
+	mmdbTypeUint64  = 9
+	mmdbTypeUint128 = 10
+	mmdbTypeArray   = 11
+	mmdbTypeCache   = 12
+	mmdbTypeEnd     = 13
+	mmdbTypeBool    = 14
+	mmdbTypeFloat   = 15
 )
 
-// decodeValue decodes one MaxMind DB encoded value at data[offset].
-// dataSection is the slice used to resolve pointer offsets — pass the same
-// section being decoded (metadata or data) since pointers are self-relative.
-func decodeValue(data []byte, offset int, dataSection []byte) (interface{}, int, error) {
-	return decodeRec(data, offset, dataSection, 0)
-}
-
-func decodeRec(data []byte, offset int, dataSection []byte, depth int) (interface{}, int, error) {
-	if depth > 32 {
-		return nil, offset, errors.New("mmdb: max decode depth exceeded")
-	}
+// readCtrl reads the type code and low 5 bits from the control byte at offset,
+// handling the extended-type second byte. Returns typeCode, low5, next offset.
+func readCtrl(data []byte, offset int) (typeCode int, low5 byte, next int, err error) {
 	if offset >= len(data) {
-		return nil, offset, fmt.Errorf("mmdb: read past end at offset %d (len %d)", offset, len(data))
+		return 0, 0, offset, fmt.Errorf("mmdb: read past end at offset %d", offset)
 	}
-
 	ctrl := data[offset]
-	offset++
-
-	typeCode := int(ctrl >> 5)
-	if typeCode == typeExtended {
-		if offset >= len(data) {
-			return nil, offset, errors.New("mmdb: truncated extended type byte")
+	next = offset + 1
+	typeCode = int(ctrl >> 5)
+	low5 = ctrl & 0x1f
+	if typeCode == mmdbTypeExtended {
+		if next >= len(data) {
+			return 0, 0, next, errors.New("mmdb: truncated extended type byte")
 		}
-		typeCode = int(data[offset]) + 7
-		offset++
+		typeCode = int(data[next]) + 7
+		next++
 	}
-
-	if typeCode == typePointer {
-		return decodePointer(data, ctrl, offset, dataSection, depth)
-	}
-
-	size, offset, err := readSize(data, ctrl&0x1f, offset)
-	if err != nil {
-		return nil, offset, err
-	}
-
-	switch typeCode {
-	case typeString:
-		end := offset + int(size)
-		if end > len(data) {
-			return nil, offset, errors.New("mmdb: string extends past end of data")
-		}
-		return string(data[offset:end]), end, nil
-
-	case typeUint16, typeUint32:
-		end := offset + int(size)
-		if end > len(data) {
-			return nil, offset, errors.New("mmdb: uint extends past end of data")
-		}
-		var v uint32
-		for i := offset; i < end; i++ {
-			v = (v << 8) | uint32(data[i])
-		}
-		return v, end, nil
-
-	case typeInt32:
-		end := offset + int(size)
-		if end > len(data) {
-			return nil, offset, errors.New("mmdb: int32 extends past end of data")
-		}
-		var v int32
-		for i := offset; i < end; i++ {
-			v = (v << 8) | int32(data[i])
-		}
-		return v, end, nil
-
-	case typeMap:
-		m := make(map[string]interface{}, size)
-		for i := uint32(0); i < size; i++ {
-			rawKey, next, err := decodeRec(data, offset, dataSection, depth+1)
-			if err != nil {
-				return nil, next, err
-			}
-			offset = next
-			key, ok := rawKey.(string)
-			if !ok {
-				return nil, offset, fmt.Errorf("mmdb: map key is not a string (got %T)", rawKey)
-			}
-			val, next, err := decodeRec(data, offset, dataSection, depth+1)
-			if err != nil {
-				return nil, next, err
-			}
-			offset = next
-			m[key] = val
-		}
-		return m, offset, nil
-
-	case typeArray:
-		arr := make([]interface{}, 0, size)
-		for i := uint32(0); i < size; i++ {
-			val, next, err := decodeRec(data, offset, dataSection, depth+1)
-			if err != nil {
-				return nil, next, err
-			}
-			offset = next
-			arr = append(arr, val)
-		}
-		return arr, offset, nil
-
-	case typeBool:
-		return size != 0, offset, nil
-
-	case typeDouble:
-		if offset+8 > len(data) {
-			return nil, offset, errors.New("mmdb: double extends past end of data")
-		}
-		return nil, offset + 8, nil
-
-	case typeFloat:
-		if offset+4 > len(data) {
-			return nil, offset, errors.New("mmdb: float extends past end of data")
-		}
-		return nil, offset + 4, nil
-
-	case typeBytes, typeUint64, typeUint128:
-		end := offset + int(size)
-		if end > len(data) {
-			return nil, offset, fmt.Errorf("mmdb: type %d extends past end of data", typeCode)
-		}
-		return nil, end, nil
-
-	case typeEnd, typeCache:
-		return nil, offset, nil
-
-	default:
-		return nil, offset, fmt.Errorf("mmdb: unknown type code %d", typeCode)
-	}
+	return typeCode, low5, next, nil
 }
 
-// decodePointer resolves a pointer value and decodes the value it points to.
-// Pointer offsets are absolute positions within dataSection.
-func decodePointer(data []byte, ctrl byte, offset int, dataSection []byte, depth int) (interface{}, int, error) {
-	ptrSize := (ctrl >> 3) & 0x3
-	ptrBase := int(ctrl & 0x7)
-	var ptrVal int
-
-	switch ptrSize {
-	case 0:
-		if offset >= len(data) {
-			return nil, offset, errors.New("mmdb: truncated pointer (size 0)")
-		}
-		ptrVal = (ptrBase << 8) | int(data[offset])
-		offset++
-	case 1:
-		if offset+1 >= len(data) {
-			return nil, offset, errors.New("mmdb: truncated pointer (size 1)")
-		}
-		ptrVal = ((ptrBase << 16) | (int(data[offset]) << 8) | int(data[offset+1])) + 2048
-		offset += 2
-	case 2:
-		if offset+2 >= len(data) {
-			return nil, offset, errors.New("mmdb: truncated pointer (size 2)")
-		}
-		ptrVal = ((ptrBase << 24) | (int(data[offset]) << 16) | (int(data[offset+1]) << 8) | int(data[offset+2])) + 526336
-		offset += 3
-	case 3:
-		if offset+3 >= len(data) {
-			return nil, offset, errors.New("mmdb: truncated pointer (size 3)")
-		}
-		ptrVal = int(binary.BigEndian.Uint32(data[offset : offset+4]))
-		offset += 4
+// readSize decodes the variable-length payload size that follows a control byte.
+func readSize(data []byte, low5 byte, offset int) (size int, next int, err error) {
+	if low5 < 29 {
+		return int(low5), offset, nil
 	}
-
-	if ptrVal >= len(dataSection) {
-		return nil, offset, fmt.Errorf("mmdb: pointer %d out of bounds (section len %d)", ptrVal, len(dataSection))
-	}
-	val, _, err := decodeRec(dataSection, ptrVal, dataSection, depth+1)
-	return val, offset, err // return post-pointer offset, not the pointed-to position
-}
-
-// readSize decodes the variable-length size field that follows a control byte.
-// low5 is the lower 5 bits of the control byte.
-func readSize(data []byte, low5 byte, offset int) (uint32, int, error) {
-	switch {
-	case low5 < 29:
-		return uint32(low5), offset, nil
-	case low5 == 29:
+	if low5 == 29 {
 		if offset >= len(data) {
 			return 0, offset, errors.New("mmdb: truncated size (29)")
 		}
-		return 29 + uint32(data[offset]), offset + 1, nil
-	case low5 == 30:
+		return 29 + int(data[offset]), offset + 1, nil
+	}
+	if low5 == 30 {
 		if offset+1 >= len(data) {
 			return 0, offset, errors.New("mmdb: truncated size (30)")
 		}
-		size := 285 + (uint32(data[offset])<<8 | uint32(data[offset+1]))
-		return size, offset + 2, nil
-	default: // 31
-		if offset+2 >= len(data) {
-			return 0, offset, errors.New("mmdb: truncated size (31)")
-		}
-		size := 65821 + (uint32(data[offset])<<16 | uint32(data[offset+1])<<8 | uint32(data[offset+2]))
-		return size, offset + 3, nil
+		s := 285 + (int(data[offset])<<8 | int(data[offset+1]))
+		return s, offset + 2, nil
 	}
+	// low5 == 31
+	if offset+2 >= len(data) {
+		return 0, offset, errors.New("mmdb: truncated size (31)")
+	}
+	s := 65821 + (int(data[offset])<<16 | int(data[offset+1])<<8 | int(data[offset+2]))
+	return s, offset + 3, nil
+}
+
+// ptrTarget resolves a pointer and returns its absolute target offset within section,
+// plus the offset after the pointer bytes in data.
+func ptrTarget(data []byte, low5 byte, offset int) (target int, next int, err error) {
+	ptrSize := int((low5 >> 3) & 0x3)
+	ptrBase := int(low5 & 0x7)
+	switch ptrSize {
+	case 0:
+		if offset >= len(data) {
+			return 0, offset, errors.New("mmdb: truncated pointer (0)")
+		}
+		return (ptrBase << 8) | int(data[offset]), offset + 1, nil
+	case 1:
+		if offset+1 >= len(data) {
+			return 0, offset, errors.New("mmdb: truncated pointer (1)")
+		}
+		v := ((ptrBase << 16) | (int(data[offset]) << 8) | int(data[offset+1])) + 2048
+		return v, offset + 2, nil
+	case 2:
+		if offset+2 >= len(data) {
+			return 0, offset, errors.New("mmdb: truncated pointer (2)")
+		}
+		v := ((ptrBase << 24) | (int(data[offset]) << 16) | (int(data[offset+1]) << 8) | int(data[offset+2])) + 526336
+		return v, offset + 3, nil
+	default: // 3
+		if offset+3 >= len(data) {
+			return 0, offset, errors.New("mmdb: truncated pointer (3)")
+		}
+		v := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		return v, offset + 4, nil
+	}
+}
+
+// skipValue advances offset past a single encoded value without decoding it.
+// Pointers are skipped by advancing past their bytes only (not followed).
+func skipValue(data []byte, offset int, depth int) (int, error) {
+	if depth > 32 {
+		return offset, errors.New("mmdb: skip depth limit exceeded")
+	}
+	typeCode, low5, offset, err := readCtrl(data, offset)
+	if err != nil {
+		return offset, err
+	}
+	if typeCode == mmdbTypePointer {
+		ptrSize := int((low5 >> 3) & 0x3)
+		return offset + ptrSize + 1, nil
+	}
+	size, offset, err := readSize(data, low5, offset)
+	if err != nil {
+		return offset, err
+	}
+	switch typeCode {
+	case mmdbTypeString, mmdbTypeBytes:
+		return offset + size, nil
+	case mmdbTypeUint16, mmdbTypeUint32, mmdbTypeInt32, mmdbTypeUint64, mmdbTypeUint128:
+		return offset + size, nil
+	case mmdbTypeDouble:
+		return offset + 8, nil
+	case mmdbTypeFloat:
+		return offset + 4, nil
+	case mmdbTypeBool, mmdbTypeEnd, mmdbTypeCache:
+		return offset, nil
+	case mmdbTypeMap:
+		for i := 0; i < size; i++ {
+			offset, err = skipValue(data, offset, depth+1) // key
+			if err != nil {
+				return offset, err
+			}
+			offset, err = skipValue(data, offset, depth+1) // value
+			if err != nil {
+				return offset, err
+			}
+		}
+		return offset, nil
+	case mmdbTypeArray:
+		for i := 0; i < size; i++ {
+			offset, err = skipValue(data, offset, depth+1)
+			if err != nil {
+				return offset, err
+			}
+		}
+		return offset, nil
+	default:
+		return offset, fmt.Errorf("mmdb: unknown type %d in skipValue", typeCode)
+	}
+}
+
+// readString decodes the string at data[offset], following pointers into section.
+// Returns the string and the offset after the value/pointer bytes in data.
+func readString(data []byte, offset int, section []byte, depth int) (string, int, error) {
+	if depth > 32 {
+		return "", offset, errors.New("mmdb: readString depth limit exceeded")
+	}
+	typeCode, low5, offset, err := readCtrl(data, offset)
+	if err != nil {
+		return "", offset, err
+	}
+	if typeCode == mmdbTypePointer {
+		target, next, err := ptrTarget(data, low5, offset)
+		if err != nil {
+			return "", next, err
+		}
+		if target >= len(section) {
+			return "", next, fmt.Errorf("mmdb: string pointer %d out of bounds (len %d)", target, len(section))
+		}
+		s, _, err := readString(section, target, section, depth+1)
+		return s, next, err // advance past pointer bytes in data, not in section
+	}
+	if typeCode != mmdbTypeString {
+		return "", offset, fmt.Errorf("mmdb: expected string type, got %d", typeCode)
+	}
+	size, offset, err := readSize(data, low5, offset)
+	if err != nil {
+		return "", offset, err
+	}
+	end := offset + size
+	if end > len(data) {
+		return "", offset, errors.New("mmdb: string payload out of bounds")
+	}
+	return string(data[offset:end]), end, nil
+}
+
+// readUint32 decodes the uint value at data[offset], following pointers into section.
+func readUint32(data []byte, offset int, section []byte, depth int) (uint32, int, error) {
+	if depth > 32 {
+		return 0, offset, errors.New("mmdb: readUint32 depth limit exceeded")
+	}
+	typeCode, low5, offset, err := readCtrl(data, offset)
+	if err != nil {
+		return 0, offset, err
+	}
+	if typeCode == mmdbTypePointer {
+		target, next, err := ptrTarget(data, low5, offset)
+		if err != nil {
+			return 0, next, err
+		}
+		if target >= len(section) {
+			return 0, next, fmt.Errorf("mmdb: uint32 pointer %d out of bounds", target)
+		}
+		v, _, err := readUint32(section, target, section, depth+1)
+		return v, next, err
+	}
+	if typeCode != mmdbTypeUint16 && typeCode != mmdbTypeUint32 {
+		return 0, offset, fmt.Errorf("mmdb: expected uint type, got %d", typeCode)
+	}
+	size, offset, err := readSize(data, low5, offset)
+	if err != nil {
+		return 0, offset, err
+	}
+	if size > 4 {
+		return 0, offset, fmt.Errorf("mmdb: uint size %d exceeds 4 bytes", size)
+	}
+	end := offset + size
+	if end > len(data) {
+		return 0, offset, errors.New("mmdb: uint payload out of bounds")
+	}
+	var v uint32
+	for i := offset; i < end; i++ {
+		v = (v << 8) | uint32(data[i])
+	}
+	return v, end, nil
 }

@@ -3,7 +3,6 @@ package mmdb
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net"
 )
 
@@ -13,18 +12,25 @@ const (
 )
 
 // Reader provides country code lookups against a MaxMind DB loaded in memory.
-// It is safe for concurrent use after construction.
+// Safe for concurrent reads after construction.
 type Reader struct {
 	data       []byte
 	nodeCount  uint32
 	recordBits uint32 // bits per record: 24, 28, or 32
-	nodeBytes  uint32 // bytes per full node (= recordBits * 2 / 8)
+	nodeBytes  uint32 // bytes per full node (recordBits * 2 / 8)
 	ipVersion  uint32
 	dataStart  uint32
-	ipv4Start  uint32 // starting tree node for IPv4 lookups in IPv6 databases
+	ipv4Start  uint32 // starting tree node for IPv4 in IPv6 databases
 }
 
-// Open parses an in-memory MaxMind DB and returns a Reader.
+// mmdbMeta holds the three fields we need from the metadata map.
+type mmdbMeta struct {
+	nodeCount  uint32
+	recordSize uint32
+	ipVersion  uint32
+}
+
+// Open parses an in-memory MaxMind DB binary and returns a Reader.
 func Open(data []byte) (*Reader, error) {
 	marker := []byte(metadataMarker)
 	idx := bytes.LastIndex(data, marker)
@@ -32,40 +38,34 @@ func Open(data []byte) (*Reader, error) {
 		return nil, errors.New("mmdb: metadata marker not found")
 	}
 
-	metaBytes := data[idx+len(marker):]
-	raw, _, err := decodeValue(metaBytes, 0, metaBytes)
+	meta, err := parseMetadata(data[idx+len(marker):])
 	if err != nil {
-		return nil, fmt.Errorf("mmdb: decode metadata: %w", err)
+		return nil, err
 	}
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil, errors.New("mmdb: metadata is not a map")
-	}
-
-	nodeCount, ok1 := asUint32(m["node_count"])
-	recordBits, ok2 := asUint32(m["record_size"])
-	if !ok1 || !ok2 {
+	if meta.nodeCount == 0 || meta.recordSize == 0 {
 		return nil, errors.New("mmdb: metadata missing node_count or record_size")
 	}
-	ipVersion, _ := asUint32(m["ip_version"])
 
-	nodeBytes := recordBits * 2 / 8
-	treeSize := nodeCount * nodeBytes
+	nodeBytes := meta.recordSize * 2 / 8
+	treeSize := meta.nodeCount * nodeBytes
 
 	r := &Reader{
 		data:       data,
-		nodeCount:  nodeCount,
-		recordBits: recordBits,
+		nodeCount:  meta.nodeCount,
+		recordBits: meta.recordSize,
 		nodeBytes:  nodeBytes,
-		ipVersion:  ipVersion,
+		ipVersion:  meta.ipVersion,
 		dataStart:  treeSize + dataSeparatorSize,
 	}
 
 	// In IPv6 databases, IPv4 addresses live in a subtree reached by following
-	// 96 left (zero-bit) edges from the root.
-	if ipVersion == 6 {
+	// 96 zero-bit edges from the root.
+	if r.ipVersion == 6 {
 		node := uint32(0)
-		for i := 0; i < 96 && node < r.nodeCount; i++ {
+		for i := 0; i < 96; i++ {
+			if node >= r.nodeCount {
+				break
+			}
 			node = r.readRecord(node, 0)
 		}
 		r.ipv4Start = node
@@ -78,7 +78,7 @@ func Open(data []byte) (*Reader, error) {
 func (r *Reader) Close() error { return nil }
 
 // LookupCountryCode traverses the Patricia trie and returns the ISO 3166-1
-// alpha-2 country code for ip. Returns "" when the IP is not found.
+// alpha-2 country code for ip, or "" when the IP is not found.
 func (r *Reader) LookupCountryCode(ip net.IP) string {
 	var (
 		bits  []byte
@@ -104,7 +104,7 @@ func (r *Reader) LookupCountryCode(ip net.IP) string {
 		node = r.readRecord(node, bit)
 	}
 
-	// node == nodeCount means the IP is not in the database.
+	// node == nodeCount → IP not in database
 	if node <= r.nodeCount {
 		return ""
 	}
@@ -120,18 +120,10 @@ func (r *Reader) LookupCountryCode(ip net.IP) string {
 		return ""
 	}
 
-	raw, _, err := decodeValue(dataSection, dataOffset, dataSection)
-	if err != nil {
-		return ""
-	}
-	rec, ok := raw.(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	return extractCountryCode(rec)
+	return decodeCountry(dataSection, dataOffset)
 }
 
-// readRecord reads one record (left when bit=0, right when bit=1) from node n.
+// readRecord reads the left (bit=0) or right (bit=1) record from node n.
 func (r *Reader) readRecord(n uint32, bit byte) uint32 {
 	base := int(n) * int(r.nodeBytes)
 	b := r.data[base:]
@@ -142,8 +134,9 @@ func (r *Reader) readRecord(n uint32, bit byte) uint32 {
 		}
 		return uint32(b[3])<<16 | uint32(b[4])<<8 | uint32(b[5])
 	case 28:
-		// Layout: bytes 0-2 = low 24 bits of left, byte 3 = high nibbles of
-		// both records, bytes 4-6 = low 24 bits of right.
+		// Bytes 0-2 = low 24 bits of left record.
+		// Byte 3 high nibble = bits 27-24 of left, low nibble = bits 27-24 of right.
+		// Bytes 4-6 = low 24 bits of right record.
 		if bit == 0 {
 			return uint32(b[3]>>4)<<24 | uint32(b[0])<<16 | uint32(b[1])<<8 | uint32(b[2])
 		}
@@ -157,19 +150,150 @@ func (r *Reader) readRecord(n uint32, bit byte) uint32 {
 	return r.nodeCount
 }
 
-// extractCountryCode walks the country fields in priority order.
-func extractCountryCode(m map[string]interface{}) string {
-	for _, key := range []string{"country", "registered_country", "represented_country"} {
-		sub, _ := m[key].(map[string]interface{})
-		code, _ := sub["iso_code"].(string)
-		if code != "" {
-			return code
+// parseMetadata scans the metadata bytes for the three fields we need.
+func parseMetadata(meta []byte) (mmdbMeta, error) {
+	var result mmdbMeta
+
+	typeCode, low5, offset, err := readCtrl(meta, 0)
+	if err != nil {
+		return result, err
+	}
+	if typeCode != mmdbTypeMap {
+		return result, errors.New("mmdb: metadata is not a map")
+	}
+	count, offset, err := readSize(meta, low5, offset)
+	if err != nil {
+		return result, err
+	}
+
+	for i := 0; i < count; i++ {
+		key, next, err := readString(meta, offset, meta, 0)
+		if err != nil {
+			return result, err
+		}
+		offset = next
+
+		switch key {
+		case "node_count":
+			v, next, err := readUint32(meta, offset, meta, 0)
+			if err != nil {
+				return result, err
+			}
+			result.nodeCount = v
+			offset = next
+		case "record_size":
+			v, next, err := readUint32(meta, offset, meta, 0)
+			if err != nil {
+				return result, err
+			}
+			result.recordSize = v
+			offset = next
+		case "ip_version":
+			v, next, err := readUint32(meta, offset, meta, 0)
+			if err != nil {
+				return result, err
+			}
+			result.ipVersion = v
+			offset = next
+		default:
+			offset, err = skipValue(meta, offset, 0)
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// decodeCountry extracts the country ISO code from the data record at offset.
+// section is the full data section used for pointer resolution.
+func decodeCountry(section []byte, offset int) string {
+	typeCode, low5, offset, err := readCtrl(section, offset)
+	if err != nil {
+		return ""
+	}
+	if typeCode == mmdbTypePointer {
+		target, _, err := ptrTarget(section, low5, offset)
+		if err != nil || target >= len(section) {
+			return ""
+		}
+		return decodeCountry(section, target)
+	}
+	if typeCode != mmdbTypeMap {
+		return ""
+	}
+	count, offset, err := readSize(section, low5, offset)
+	if err != nil {
+		return ""
+	}
+
+	for i := 0; i < count; i++ {
+		key, next, err := readString(section, offset, section, 0)
+		if err != nil {
+			return ""
+		}
+		offset = next
+
+		switch key {
+		case "country", "registered_country", "represented_country":
+			code := findISOCode(section, offset)
+			offset, err = skipValue(section, offset, 0)
+			if err != nil {
+				return ""
+			}
+			if code != "" {
+				return code
+			}
+		default:
+			offset, err = skipValue(section, offset, 0)
+			if err != nil {
+				return ""
+			}
 		}
 	}
 	return ""
 }
 
-func asUint32(v interface{}) (uint32, bool) {
-	u, ok := v.(uint32)
-	return u, ok
+// findISOCode reads the "iso_code" string from the map at offset.
+func findISOCode(section []byte, offset int) string {
+	typeCode, low5, offset, err := readCtrl(section, offset)
+	if err != nil {
+		return ""
+	}
+	if typeCode == mmdbTypePointer {
+		target, _, err := ptrTarget(section, low5, offset)
+		if err != nil || target >= len(section) {
+			return ""
+		}
+		return findISOCode(section, target)
+	}
+	if typeCode != mmdbTypeMap {
+		return ""
+	}
+	count, offset, err := readSize(section, low5, offset)
+	if err != nil {
+		return ""
+	}
+
+	for i := 0; i < count; i++ {
+		key, next, err := readString(section, offset, section, 0)
+		if err != nil {
+			return ""
+		}
+		offset = next
+
+		if key == "iso_code" {
+			code, _, err := readString(section, offset, section, 0)
+			if err != nil {
+				return ""
+			}
+			return code
+		}
+		offset, err = skipValue(section, offset, 0)
+		if err != nil {
+			return ""
+		}
+	}
+	return ""
 }
