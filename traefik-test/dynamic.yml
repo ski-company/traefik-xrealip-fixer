@@ -6,7 +6,7 @@ http:
           autoRefresh: true
           refreshInterval: 30m
           directDepth: 1
-          geoLite2LicenseKey: ""
+          geoLite2LicenseKey: "XXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
           debug: true
 
   routers:

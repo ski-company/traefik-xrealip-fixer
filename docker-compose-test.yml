@@ -45,13 +45,14 @@ services:
     profiles: ["bench"]
     depends_on:
       - traefik
-      - whoami
+      - whoami1
+      - whoami2
     entrypoint: ["k6"]
     command: ["run", "/scripts/k6-benchmark.js"]
     volumes:
       - ./traefik-test/k6-benchmark.js:/scripts/k6-benchmark.js:ro
     environment:
-      - TARGET_URL=http://traefik/whoami
+      - TARGET_URL=http://traefik/
       - VUS=20
       - DURATION=30s
     networks:
