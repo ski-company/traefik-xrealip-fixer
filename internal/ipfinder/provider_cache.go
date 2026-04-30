@@ -85,10 +85,18 @@ func getProviderBase(ttl time.Duration) (cfCIDRs []string, cfnCIDRs []string, re
 	fresh = !globalProviderCache.lastRefresh.IsZero() &&
 		now.Sub(globalProviderCache.lastRefresh) < ttl
 	if !fresh {
-		globalProviderCache.cfCIDRs = cloudflare.TrustedIPS()
-		globalProviderCache.cfnCIDRs = cloudfront.TrustedIPS()
+		newCF := cloudflare.TrustedIPS()
+		newCFN := cloudfront.TrustedIPS()
+		if len(newCF) > 0 {
+			globalProviderCache.cfCIDRs = newCF
+		}
+		if len(newCFN) > 0 {
+			globalProviderCache.cfnCIDRs = newCFN
+		}
+		// Always advance lastRefresh to avoid hammering the network on every request
+		// even when providers returned empty (transient failure keeps old CIDRs).
 		globalProviderCache.lastRefresh = now
-		refreshed = true
+		refreshed = len(newCF) > 0 || len(newCFN) > 0
 	}
 
 	cfCIDRs = append([]string(nil), globalProviderCache.cfCIDRs...)
