@@ -38,8 +38,9 @@ func getGlobalInterval() time.Duration {
 	return globalInterval
 }
 
-func startGlobalRefresh(interval time.Duration) {
+func startGlobalRefresh(interval time.Duration, geoIP geoIPSettings) {
 	setGlobalInterval(interval)
+	setGlobalGeoIPSettings(geoIP)
 	globalRefreshOnce.Do(func() {
 		go refreshProvidersLoop()
 	})
@@ -53,6 +54,7 @@ func refreshProvidersLoop() {
 	for {
 		<-t.C
 		forceRefreshProviderBase()
+		forceRefreshGeoIPBase()
 		interval := getGlobalInterval()
 		t.Reset(interval)
 	}

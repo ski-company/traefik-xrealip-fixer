@@ -18,6 +18,7 @@ type Ipfinder struct {
 	cfnCIDRsQty int
 	directDepth int
 	refreshTTL  time.Duration
+	geoIP       geoIPSettings
 
 	mu        sync.RWMutex        // guards TrustIP
 	userTrust map[string][]string // keep user-supplied CIDRs for merges on refresh

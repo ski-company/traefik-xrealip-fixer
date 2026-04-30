@@ -159,6 +159,9 @@ func (ipFinder *Ipfinder) applyTrusted(req *http.Request, provider providers.Pro
 	}
 	helper.AppendXFF(req.Header, clientIP)
 	req.Header.Set(helper.XRealIP, clientIP)
+	if countryCode := lookupCountryCode(clientIP); countryCode != "" {
+		req.Header.Set(helper.XCountry, countryCode)
+	}
 }
 
 // rejectUntrusted clears spoofable headers and stops the chain.
@@ -166,6 +169,7 @@ func (ipFinder *Ipfinder) rejectUntrusted(rw http.ResponseWriter, req *http.Requ
 	logger.LogWarn("Untrusted request from", "remote", socketIP)
 	req.Header.Set(helper.XRealipFixerTrusted, "no")
 	req.Header.Set(helper.XRealipFixerProvider, "unknown")
+	req.Header.Del(helper.XCountry)
 	req.Header.Del(cloudflare.ClientIPHeaderName)
 	req.Header.Del(cloudfront.ClientIPHeaderName)
 	http.Error(rw, "You didn't say the magic word", http.StatusGone)

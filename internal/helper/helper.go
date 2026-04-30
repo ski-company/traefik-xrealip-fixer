@@ -13,6 +13,7 @@ const (
 	Forwarded            = "Forwarded"
 	XRealipFixerTrusted  = "X-Realip-Fixer-Trusted"
 	XRealipFixerProvider = "X-Realip-Fixer-Provider"
+	XCountry             = "X-Country"
 )
 
 // cleanInboundForwardingHeaders removes spoofable forwarding headers.
@@ -23,6 +24,7 @@ func CleanInboundForwardingHeaders(h http.Header) {
 	h.Del(Forwarded)
 	h.Del(XRealipFixerTrusted)
 	h.Del(XRealipFixerProvider)
+	h.Del(XCountry)
 }
 
 // appendXFF appends client to X-Forwarded-For per common proxy behavior.

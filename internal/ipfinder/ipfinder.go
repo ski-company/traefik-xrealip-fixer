@@ -29,6 +29,7 @@ func New(ctx context.Context, next http.Handler, cfg *config.Config, name string
 		TrustIP:     make(map[providers.Provider][]*net.IPNet),
 		userTrust:   cfg.TrustIP,
 		directDepth: cfg.DirectDepth,
+		geoIP:       newGeoIPSettings(cfg),
 	}
 
 	ival, err := time.ParseDuration(cfg.RefreshInterval)
@@ -49,8 +50,16 @@ func New(ctx context.Context, next http.Handler, cfg *config.Config, name string
 		logger.LogInfo("providers IPS loaded", "cloudflare", fmt.Sprintf("%d", cfCIDRsQty), "cloudfront", fmt.Sprintf("%d", cfnCIDRsQty), "middleware", name)
 	}
 
+	geoRefreshed, err := ipFinder.refreshGeoIPCountry()
+	if err != nil {
+		logger.LogWarn("initial GeoLite2 Country database load failed", "error", err.Error(), "middleware", name)
+	} else if geoRefreshed {
+		logger.LogInfo("GeoLite2 Country database loaded", "middleware", name)
+	}
+
 	if cfg.AutoRefresh {
-		startGlobalRefresh(ival)
+		startGlobalRefresh(ival, ipFinder.geoIP)
+		go ipFinder.refreshProvidersIPSLoop(ctx, ival)
 	}
 
 	return ipFinder, nil

@@ -29,6 +29,12 @@ func (ipFinder *Ipfinder) refreshProvidersIPSLoop(ctx context.Context, interval 
 				cfCIDRsQty, cfnCIDRsQty := ipFinder.cidrCounts()
 				logger.LogInfo("providers IPS refreshed", "cloudflare", fmt.Sprintf("%d", cfCIDRsQty), "cloudfront", fmt.Sprintf("%d", cfnCIDRsQty))
 			}
+			geoRefreshed, err := ipFinder.refreshGeoIPCountry()
+			if err != nil {
+				logger.LogWarn("periodic GeoLite2 Country database refresh failed", "error", err.Error())
+			} else if geoRefreshed {
+				logger.LogInfo("GeoLite2 Country database refreshed")
+			}
 			t.Reset(interval)
 		}
 	}

@@ -7,12 +7,13 @@ Middleware Traefik qui reconstruit l’IP client de façon fiable en fonction :
 - du socket distant,
 - d’un scan contrôlé de `X-Forwarded-For` depuis la fin (proche du dernier proxy).
 
-Chaque requête est marquée via `X-Realip-Fixer-Trusted` (yes/no) et `X-Realip-Fixer-Provider` (cloudflare/cloudfront/direct/unknown), et `X-Real-IP` / `X-Forwarded-For` sont réécrits pour les services en aval.
+Chaque requête est marquée via `X-Realip-Fixer-Trusted` (yes/no), `X-Realip-Fixer-Provider` (cloudflare/cloudfront/direct/unknown), et `X-Country` quand GeoLite2 Country peut résoudre l’IP validée. `X-Real-IP` / `X-Forwarded-For` sont réécrits pour les services en aval.
 
 ## Fonctionnement
 - Pas d’en-tête provider (CF/CFN) : chemin direct, on prend l’IP socket ou un hop XFF selon `directDepth`.
 - En-tête provider présent : on valide l’IP « edge » depuis la fin du XFF (limité par `directDepth`) contre les CIDRs Cloudflare/CloudFront (rafraîchies périodiquement). On ne retombe sur l’IP socket que si aucun hop XFF valide, sinon 410 Gone.
 - On extrait l’IP client à partir du header provider, fallback IP socket si invalide, puis on réécrit XFF / X-Real-IP.
+- Quand une clé MaxMind est configurée, on télécharge GeoLite2 Country au démarrage, on la rafraîchit périodiquement si `autoRefresh` est activé, puis on remplit `X-Country` avec le code ISO pays de l’IP validée quand disponible.
 
 ## Configuration du plugin (dynamic.yml)
 ```yaml
@@ -21,9 +22,11 @@ http:
     xrealip-fixer:
       plugin:
         xrealip-fixer:
-          autoRefresh: true            # refresh périodique des CIDRs CF/CFN
+          autoRefresh: true            # refresh périodique des CIDRs CF/CFN et de GeoLite2 Country
           refreshInterval: 30m         # durée Go, ex: "12h", "30m"
           directDepth: 1               # nombre de hops XFF à considérer en direct
+          geoLite2LicenseKey: ""       # optionnel: clé MaxMind
+          geoLite2DownloadURL: ""      # optionnel: endpoint de téléchargement compatible MaxMind
           trustip:                     # (optionnel) CIDRs custom par provider
             cloudflare:
               - "203.0.113.0/24"
@@ -37,6 +40,7 @@ http:
 - `X-Forwarded-For` : append de l’IP client validée.
 - `X-Realip-Fixer-Trusted` : `yes` ou `no`.
 - `X-Realip-Fixer-Provider` : `cloudflare`, `cloudfront`, `direct`, `unknown`.
+- `X-Country` : code ISO pays MaxMind GeoLite2 Country pour l’IP client validée, quand disponible.
 
 ### Codes de réponse
 - Header provider présent mais IP socket non autorisée → 410 Gone + headers provider nettoyés.
@@ -59,6 +63,7 @@ http:
           autoRefresh: true
           refreshInterval: 30m
           directDepth: 1
+          geoLite2LicenseKey: ""
           debug: false
 
   routers:
@@ -79,6 +84,8 @@ http:
 - `trustip` : map provider → CIDRs additionnelles.
 - `autoRefresh` (bool), `refreshInterval` (durée Go).
 - `directDepth` (int) : profondeur XFF en chemin direct.
+- `geoLite2LicenseKey` : clé MaxMind utilisée pour télécharger GeoLite2 Country.
+- `geoLite2DownloadURL` : endpoint compatible MaxMind optionnel. Si vide, l’endpoint MaxMind par défaut est utilisé.
 - `debug` (bool).
 
 ## Licence
