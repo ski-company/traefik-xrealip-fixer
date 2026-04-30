@@ -1,15 +1,14 @@
 package ipfinder
 
 import (
-	"fmt"
-	"net/netip"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/oschwald/maxminddb-golang/v2"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/config"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/logger"
+	"github.com/ski-company/traefik-xrealip-fixer/internal/mmdb"
 	"github.com/ski-company/traefik-xrealip-fixer/internal/providers/geolite2"
 )
 
@@ -21,33 +20,19 @@ type geoIPSettings struct {
 type geoIPCache struct {
 	mu          sync.RWMutex
 	refreshMu   sync.Mutex
-	reader      *maxminddb.Reader
+	reader      *mmdb.Reader
 	lastRefresh time.Time
 	desired     geoIPSettings
 	loaded      geoIPSettings
 }
 
-type geoIPCountryRecord struct {
-	Country struct {
-		ISOCode string `maxminddb:"iso_code"`
-	} `maxminddb:"country"`
-	RegisteredCountry struct {
-		ISOCode string `maxminddb:"iso_code"`
-	} `maxminddb:"registered_country"`
-	RepresentedCountry struct {
-		ISOCode string `maxminddb:"iso_code"`
-	} `maxminddb:"represented_country"`
-}
-
 var globalGeoIPCache geoIPCache
 
 func newGeoIPSettings(cfg *config.Config) geoIPSettings {
-	settings := geoIPSettings{
+	return geoIPSettings{
 		licenseKey:  strings.TrimSpace(cfg.GeoLite2LicenseKey),
 		downloadURL: strings.TrimSpace(cfg.GeoLite2DownloadURL),
 	}
-
-	return settings
 }
 
 func (settings geoIPSettings) enabled() bool {
@@ -65,7 +50,6 @@ func setGlobalGeoIPSettings(settings geoIPSettings) {
 	if !settings.enabled() {
 		return
 	}
-
 	globalGeoIPCache.mu.Lock()
 	globalGeoIPCache.desired = settings
 	globalGeoIPCache.mu.Unlock()
@@ -146,9 +130,9 @@ func refreshGeoIPBaseWithSettings(settings geoIPSettings, ttl time.Duration, for
 		return false, err
 	}
 
-	reader, err := maxminddb.OpenBytes(data)
+	reader, err := mmdb.Open(data)
 	if err != nil {
-		return false, fmt.Errorf("open GeoLite2 Country database: %w", err)
+		return false, err
 	}
 
 	globalGeoIPCache.mu.Lock()
@@ -165,7 +149,6 @@ func refreshGeoIPBaseWithSettings(settings geoIPSettings, ttl time.Duration, for
 }
 
 func lookupCountryCode(clientIP string) string {
-	var record geoIPCountryRecord
 	globalGeoIPCache.mu.RLock()
 	reader := globalGeoIPCache.reader
 	if reader == nil {
@@ -173,35 +156,24 @@ func lookupCountryCode(clientIP string) string {
 		return ""
 	}
 
-	addr, err := netip.ParseAddr(clientIP)
-	if err != nil || !isGeoIPLookupAddr(addr) {
+	ip := net.ParseIP(clientIP)
+	if ip == nil || !isGeoIPLookupAddr(ip) {
 		globalGeoIPCache.mu.RUnlock()
-		return ""
-	}
-	result := reader.Lookup(addr)
-	if err := result.Err(); err != nil {
-		globalGeoIPCache.mu.RUnlock()
-		return ""
-	}
-	if !result.Found() {
-		globalGeoIPCache.mu.RUnlock()
-		return ""
-	}
-	err = result.Decode(&record)
-	globalGeoIPCache.mu.RUnlock()
-	if err != nil {
 		return ""
 	}
 
-	if code := strings.TrimSpace(record.Country.ISOCode); code != "" {
-		return strings.ToUpper(code)
-	}
-	if code := strings.TrimSpace(record.RegisteredCountry.ISOCode); code != "" {
-		return strings.ToUpper(code)
-	}
-	return strings.ToUpper(strings.TrimSpace(record.RepresentedCountry.ISOCode))
+	code := reader.LookupCountryCode(ip)
+	globalGeoIPCache.mu.RUnlock()
+
+	return strings.ToUpper(strings.TrimSpace(code))
 }
 
-func isGeoIPLookupAddr(addr netip.Addr) bool {
-	return addr.IsGlobalUnicast() && !addr.IsPrivate()
+func isGeoIPLookupAddr(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip.IsGlobalUnicast()
+	}
+	return ip.IsGlobalUnicast()
 }
