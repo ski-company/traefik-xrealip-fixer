@@ -75,10 +75,10 @@ http:
 ```
 
 ## Dev / bench local
-- `docker compose -f docker-compose-test.yml up -d` (Traefik + whoami + plugin monté).
+- `docker compose -f docker-compose-test.yml up -d` (Traefik + whoami1 + whoami2 + plugin monté).
 - k6 (profil `bench`) :  
   `docker compose -f docker-compose-test.yml --profile bench run --rm k6`  
-  Env optionnelles : `HOST=whoami.local`, `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`, `VUS`, `DURATION`.
+  Le script exécute des stages de charge fixes (warm-up → pic 200 VUs). Env optionnelles : `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`.
 
 ## Champs de configuration (struct `Config`)
 - `trustip` : map provider → CIDRs additionnelles.

@@ -53,8 +53,6 @@ services:
       - ./traefik-test/k6-benchmark.js:/scripts/k6-benchmark.js:ro
     environment:
       - TARGET_URL=http://traefik/
-      - VUS=20
-      - DURATION=30s
     networks:
       - proxy
 

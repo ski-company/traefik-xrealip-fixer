@@ -75,10 +75,10 @@ http:
 ```
 
 ## Dev / local test
-- `docker compose -f docker-compose-test.yml up -d` (Traefik + whoami + plugin source mounted).
+- `docker compose -f docker-compose-test.yml up -d` (Traefik + whoami1 + whoami2 + plugin source mounted).
 - k6 benchmark (profile `bench`):  
   `docker compose -f docker-compose-test.yml --profile bench run --rm k6`  
-  Optional env: `HOST=whoami.local`, `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`, `VUS`, `DURATION`.
+  The script runs fixed load stages (warm-up → 200 VUs peak). Optional env overrides: `TARGET_URL=http://traefik/`, `XFF="203.0.113.10, 10.0.0.1"`.
 
 ## Config fields (struct `Config`)
 - `trustip`: map provider → extra CIDRs.
