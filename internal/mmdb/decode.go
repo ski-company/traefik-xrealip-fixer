@@ -8,6 +8,8 @@ import (
 	"fmt"
 )
 
+const maxMMDBDepth = 32
+
 // MaxMind DB type codes (high 3 bits of control byte).
 const (
 	mmdbTypeExtended = 0
@@ -110,7 +112,7 @@ func ptrTarget(data []byte, low5 byte, offset int) (target int, next int, err er
 // skipValue advances offset past a single encoded value without decoding it.
 // Pointers are skipped by advancing past their bytes only (not followed).
 func skipValue(data []byte, offset int, depth int) (int, error) {
-	if depth > 32 {
+	if depth > maxMMDBDepth {
 		return offset, errors.New("mmdb: skip depth limit exceeded")
 	}
 	typeCode, low5, offset, err := readCtrl(data, offset)
@@ -164,7 +166,7 @@ func skipValue(data []byte, offset int, depth int) (int, error) {
 // readString decodes the string at data[offset], following pointers into section.
 // Returns the string and the offset after the value/pointer bytes in data.
 func readString(data []byte, offset int, section []byte, depth int) (string, int, error) {
-	if depth > 32 {
+	if depth > maxMMDBDepth {
 		return "", offset, errors.New("mmdb: readString depth limit exceeded")
 	}
 	typeCode, low5, offset, err := readCtrl(data, offset)
@@ -198,7 +200,7 @@ func readString(data []byte, offset int, section []byte, depth int) (string, int
 
 // readUint32 decodes the uint value at data[offset], following pointers into section.
 func readUint32(data []byte, offset int, section []byte, depth int) (uint32, int, error) {
-	if depth > 32 {
+	if depth > maxMMDBDepth {
 		return 0, offset, errors.New("mmdb: readUint32 depth limit exceeded")
 	}
 	typeCode, low5, offset, err := readCtrl(data, offset)

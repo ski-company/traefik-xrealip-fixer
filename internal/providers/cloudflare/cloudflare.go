@@ -11,6 +11,8 @@ import (
 
 const requestTimeout = 10 * time.Second
 
+var httpClient = &http.Client{Timeout: requestTimeout}
+
 // TrustedIPS fetches Cloudflare's current IP ranges (IPv4 + IPv6).
 func TrustedIPS() []string {
 	urls := []string{
@@ -19,9 +21,8 @@ func TrustedIPS() []string {
 	}
 
 	var ipList []string
-	client := http.Client{Timeout: requestTimeout}
 	for _, url := range urls {
-		resp, err := client.Get(url)
+		resp, err := httpClient.Get(url)
 		if err != nil {
 			logger.LogWarn("Cloudflare IP list fetch failed", "url", url, "error", err.Error())
 			continue

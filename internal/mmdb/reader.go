@@ -49,6 +49,10 @@ func Open(data []byte) (*Reader, error) {
 	nodeBytes := meta.recordSize * 2 / 8
 	treeSize := meta.nodeCount * nodeBytes
 
+	if uint64(treeSize)+dataSeparatorSize > uint64(len(data)) {
+		return nil, errors.New("mmdb: data too short for search tree")
+	}
+
 	r := &Reader{
 		data:       data,
 		nodeCount:  meta.nodeCount,
@@ -126,7 +130,11 @@ func (r *Reader) LookupCountryCode(ip net.IP) string {
 // readRecord reads the left (bit=0) or right (bit=1) record from node n.
 func (r *Reader) readRecord(n uint32, bit byte) uint32 {
 	base := int(n) * int(r.nodeBytes)
-	b := r.data[base:]
+	end := base + int(r.nodeBytes)
+	if end > len(r.data) {
+		return r.nodeCount
+	}
+	b := r.data[base:end]
 	switch r.recordBits {
 	case 24:
 		if bit == 0 {

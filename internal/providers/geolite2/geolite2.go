@@ -19,6 +19,8 @@ const (
 	maxDatabaseBytes   = 128 << 20
 )
 
+var httpClient = &http.Client{Timeout: 2 * time.Minute}
+
 // Config contains the MaxMind download settings.
 type Config struct {
 	LicenseKey  string
@@ -42,8 +44,7 @@ func DownloadCountryDatabase(cfg Config) ([]byte, error) {
 		return nil, err
 	}
 
-	client := http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Get(downloadURL)
+	resp, err := httpClient.Get(downloadURL)
 	if err != nil {
 		return nil, fmt.Errorf("download GeoLite2 Country: %w", sanitizedDownloadError(err))
 	}

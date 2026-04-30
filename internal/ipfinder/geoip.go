@@ -26,6 +26,8 @@ type geoIPCache struct {
 	loaded      geoIPSettings
 }
 
+const defaultGeoTTL = 12 * time.Hour
+
 var globalGeoIPCache geoIPCache
 
 func newGeoIPSettings(cfg *config.Config) geoIPSettings {
@@ -70,7 +72,7 @@ func getGeoIPBase(settings geoIPSettings, ttl time.Duration) (bool, error) {
 		return false, nil
 	}
 	if ttl <= 0 {
-		ttl = 12 * time.Hour
+		ttl = defaultGeoTTL
 	}
 
 	setGlobalGeoIPSettings(settings)
@@ -85,7 +87,7 @@ func getGeoIPBase(settings geoIPSettings, ttl time.Duration) (bool, error) {
 		return false, nil
 	}
 
-	return refreshGeoIPBaseWithSettings(settings, ttl, false)
+	return refreshGeoIPBaseWithSettings(settings, ttl)
 }
 
 func forceRefreshGeoIPBase() {
@@ -94,7 +96,7 @@ func forceRefreshGeoIPBase() {
 		return
 	}
 
-	refreshed, err := refreshGeoIPBaseWithSettings(settings, getGlobalInterval(), false)
+	refreshed, err := refreshGeoIPBaseWithSettings(settings, getGlobalInterval())
 	if err != nil {
 		logger.LogWarn("GeoLite2 Country database refresh failed", "error", err.Error())
 	} else if refreshed {
@@ -102,27 +104,25 @@ func forceRefreshGeoIPBase() {
 	}
 }
 
-func refreshGeoIPBaseWithSettings(settings geoIPSettings, ttl time.Duration, force bool) (bool, error) {
+func refreshGeoIPBaseWithSettings(settings geoIPSettings, ttl time.Duration) (bool, error) {
 	if !settings.enabled() {
 		return false, nil
 	}
 	if ttl <= 0 {
-		ttl = 12 * time.Hour
+		ttl = defaultGeoTTL
 	}
 
 	globalGeoIPCache.refreshMu.Lock()
 	defer globalGeoIPCache.refreshMu.Unlock()
 
-	if !force {
-		now := time.Now()
-		globalGeoIPCache.mu.RLock()
-		fresh := globalGeoIPCache.reader != nil &&
-			globalGeoIPCache.loaded == settings &&
-			now.Sub(globalGeoIPCache.lastRefresh) < ttl
-		globalGeoIPCache.mu.RUnlock()
-		if fresh {
-			return false, nil
-		}
+	now := time.Now()
+	globalGeoIPCache.mu.RLock()
+	fresh := globalGeoIPCache.reader != nil &&
+		globalGeoIPCache.loaded == settings &&
+		now.Sub(globalGeoIPCache.lastRefresh) < ttl
+	globalGeoIPCache.mu.RUnlock()
+	if fresh {
+		return false, nil
 	}
 
 	data, err := geolite2.DownloadCountryDatabase(settings.providerConfig())
@@ -169,11 +169,5 @@ func lookupCountryCode(clientIP string) string {
 }
 
 func isGeoIPLookupAddr(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return false
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		return ip.IsGlobalUnicast()
-	}
-	return ip.IsGlobalUnicast()
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && ip.IsGlobalUnicast()
 }

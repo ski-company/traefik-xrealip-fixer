@@ -15,14 +15,15 @@ const (
 	maxBodyBytes   = 1 << 20
 )
 
+var httpClient = &http.Client{Timeout: requestTimeout}
+
 // CFIPs is the CloudFlare Server IP list (this is checked on build).
 func TrustedIPS() []string {
 
 	// Found at https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/LocationsOfEdgeServers.html
 	url := "https://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips"
 
-	client := http.Client{Timeout: requestTimeout}
-	resp, err := client.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		logger.LogWarn("CloudFront IP list fetch failed", "url", url, "error", err.Error())
 		return nil
